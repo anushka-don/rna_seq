@@ -1,0 +1,252 @@
+---
+title: "DESeq2 Differential Expression Analysis"
+author: "Anushka Dongaonkar"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(DESeq2)
+library(ggplot2)
+library(RColorBrewer)
+library(pheatmap)
+library(fgsea)
+library(scales)
+library(ggrepel)
+```
+
+## Read files
+
+``` {r read_files}
+# Define file paths
+input_file <- "../results/combined_counts_matrix.txt"
+output_file <- "../results/deseq2_results.csv"
+ens2symbol <- "../results/ensemble_genes.csv"
+```
+
+## Load Data
+
+```{r load_and_filter_data}
+
+# Function to filter out zero-variance genes
+filter_zero_var_genes <- function(count_data) {
+  filtered <- count_data %>%
+    rowwise() %>%
+    filter(var(c_across(-gene)) > 0) %>%
+    ungroup()
+  return(filtered)
+}
+```
+
+```{r apply_load_f}
+# Load data
+count_data <- read.csv(input_file, sep = '\t')
+
+# Apply function
+count_data <- filter_zero_var_genes(count_data)
+```
+
+## Metadata
+```{r metadata_function}
+# Function to create metadata for DESeq2
+get_meta_data <- function(count_data) {
+    count_headers <- colnames(count_data)[-1]  # Exclude 'gene' column
+
+    meta_data <- tibble(
+        sample = count_headers,
+        condition = ifelse(grepl("control", count_headers), "control", "experiment"),
+        replicate = str_extract(count_headers, "rep\\d+")
+    )
+
+    rownames(meta_data) <- meta_data$sample  # Ensure row names match column names in count matrix
+    return(meta_data)
+}
+```
+
+```{r apply_f_metadata}
+# Generate metadata
+meta_data <- get_meta_data(count_data)
+
+# Show metadata
+meta_data
+```
+
+```{r return_dds}
+# Function to perform DESeq2 analysis
+deseq_dds <- function(count_data, meta_data) {
+  count_matrix <- as.matrix(count_data[, -1])  # Remove gene column
+  rownames(count_matrix) <- count_data$gene
+  
+  # Match colData with countData
+  meta_data <- meta_data[match(colnames(count_matrix), meta_data$sample), ]
+  
+  # Create DESeq2 dataset
+  dds <- DESeqDataSetFromMatrix(
+    countData = count_matrix,
+    colData = meta_data,
+    design = ~ condition
+  )
+  
+  return(dds)
+}
+```
+
+```{r run_deseq}
+run_deseq <- function(dds) {
+  # Run DESeq2
+  dds <- DESeq(dds)
+  
+  # Extract results
+  res <- results(dds, alpha = 0.05)  
+
+  # Convert results to tibble and add gene names
+  res_tibble <- as_tibble(res, rownames = "gene")
+  
+  return(res_tibble)
+}
+
+```
+
+```{r perfomring_deseq}
+# Perform DESeq2 analysis
+dds <- deseq_dds(count_data, meta_data)
+deseq_results <- run_deseq(dds)
+```
+
+```{r deseq_results_save}
+write.csv(deseq_results, output_file, row.names = FALSE)
+```
+
+## Applying vsd for normalization
+
+```{r}
+# normalize with vsd
+vsd <- vst(dds, blind=FALSE)
+```
+
+
+```{r plot_PCA}
+plotPCA(vsd, intgroup=c("condition", "replicate"))
+```
+
+
+```{r plot_heatmap}
+# find sample distances
+sampleDists <- dist(t(assay(vsd)))
+
+sampleDistMatrix <- as.matrix(sampleDists)
+
+rownames(sampleDistMatrix) <- paste(vsd$condition, vsd$replicate, sep="_")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+```
+```{r fgsea}
+# Data prep
+ens2symbol <- read.csv(ens2symbol)
+res <- inner_join(deseq_results, ens2symbol, by=c("gene"))
+res
+```
+```{r symbol stat prep}
+res
+res2 <- res %>% 
+  dplyr::select(symbol, log2FoldChange) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(symbol) %>% 
+  summarize(stat=mean(log2FoldChange))
+res2
+```
+```{r ranking}
+ranks <- deframe(res2)
+head(ranks,10)
+```
+```{r}
+pathways.hallmark <- gmtPathways('../refs/c2.all.v2024.1.Hs.symbols.gmt')
+head(pathways.hallmark)
+```
+```{r # apply fgsea}
+# run fgsea 
+fgseaRes <- fgsea(pathways=pathways.hallmark, stats=ranks)
+
+```
+
+```{r}
+fgseaResTidy <- fgseaRes %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fgseaResTidy <- fgseaResTidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj)
+
+fgseaResTidy$pathway <- gsub("_", " ", fgseaResTidy$pathway)
+
+head(fgseaResTidy,30)
+```
+
+```{r}
+# use a filter for 
+fgseaResTidy_filtered <- fgseaResTidy %>%
+  filter(,padj < 0.05)
+fgseaResTidy_filtered
+```
+
+```{r}
+ggplot(fgseaResTidy_filtered, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.001)) +
+  coord_flip() +
+    labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways NES from GSEA") + 
+  theme_minimal()
+```
+
+```{r}
+pathways <- pathways.hallmark %>% 
+  enframe("pathway", "symbol") %>% 
+  unnest() %>% 
+  inner_join(res, by="symbol") %>%
+  mutate(logp = -log10(padj))
+
+pathways
+```
+```{r 3c}
+# Add a column to classify genes as UP or DOWN
+pathways$label <- ifelse(pathways$logp < 3, "NS",
+                         ifelse(pathways$log2FoldChange > 0, "UP", "DOWN"))
+# plot 
+ggplot(data = pathways, aes(x = log2FoldChange, y = logp, color = label)) +
+  geom_point() +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  geom_hline(yintercept = 3, linetype = "dashed") +
+  xlim(-10,10) +
+  ylim(0,15) +
+  scale_color_manual(values = c("UP" = "red", "DOWN" = "blue")) +
+  theme_minimal() +
+  labs(title = "Gene Expression Changes",
+       x = "Log2 Fold Change",
+       y = "-log10(p-value)")
+
+```
+```{r 3f}
+# Filter significant pathways
+significant_pathways <- fgseaResTidy_filtered %>%
+  filter(padj < 0.05) %>%
+  arrange(NES)
+
+gsea_results <- gsea_results %>%
+  mutate(percent_DE = (de_genes / total_genes) * 100)
+significant_pathways
+```
+
+
+```{r}
+
+```
+
