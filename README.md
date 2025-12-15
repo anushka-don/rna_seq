@@ -2,6 +2,8 @@
 
 This repository contains a Nextflow pipeline for processing RNA-seq data, including quality control, alignment, and quantification using multiple tools.
 
+Original Publication - https://pmc.ncbi.nlm.nih.gov/articles/PMC5071180/
+
 ## Pipeline Overview
 The pipeline performs the following steps:
 
