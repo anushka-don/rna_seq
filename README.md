@@ -55,3 +55,5 @@ MultiQC report
 The pipeline expects paired-end reads in standard naming format (e.g., sample_1.fastq.gz, sample_2.fastq.gz).
 
 Modules should be available in the specified ./modules/ directory.
+
+Number of samples: The default input glob `/projectnb/bf528/materials/project-1-rnaseq/full_files/*_R{1,2}.fastq.gz` matches 12 FASTQ files. That corresponds to six paired-end samples (one R1 and one R2 file per sample).
