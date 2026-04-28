@@ -28,7 +28,7 @@ Original Publication - https://www.nature.com/articles/s41467-022-34069-z
     - Endocrine differentiation (e.g., NEUROG3, NKX2‑2, β‑cell developmental programs).  
     - Cell‑cycle regulation and signaling (e.g., KRAS, RTK/MAPK pathways).  
 
-- **High‑level analysis plan**
+- **Analysis plan**
   - Process raw reads through the RNA‑seq pipeline (QC, alignment, quantification).  
   - Perform differential expression analysis between WT and KO Stage 5 samples.  
   - Conduct pathway/gene set enrichment to interpret functional differences in endocrine precursor biology.
